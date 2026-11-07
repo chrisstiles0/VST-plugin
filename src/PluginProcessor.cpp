@@ -1,21 +1,30 @@
-#include <juce_audio_processors/juce_audio_processors.h>
+#include "SynthParameters.h"
+#include "dsp/WavetableSynth.h"
+#include "ui/PluginEditor.h"
 
 namespace
 {
+const juce::Identifier stateType("WavetableSynthState");
+const juce::Identifier versionKey("schemaVersion");
+constexpr int stateVersion = 1;
+
 class WavetableProcessor final : public juce::AudioProcessor
 {
 public:
     WavetableProcessor()
         : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
-          state(*this, nullptr, "WavetableSynthState", makeParameters())
+          state(*this, nullptr, stateType, wave::makeParameters()),
+          defaults(state.copyState())
     {
+        for (std::size_t i = 0; i < values.size(); ++i)
+            values[i] = state.getRawParameterValue(wave::parameterId(static_cast<wave::Parameter>(i)));
     }
 
     const juce::String getName() const override { return "Wavetable Synth"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.05; }
+    double getTailLengthSeconds() const override { return 8.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -24,100 +33,76 @@ public:
     void changeProgramName(int, const juce::String&) override {}
 
     bool hasEditor() const override { return true; }
+
     juce::AudioProcessorEditor* createEditor() override
     {
-        return new juce::GenericAudioProcessorEditor(*this);
+        return wave::createWavetableEditor(*this, state, engine);
     }
 
     bool isBusesLayoutSupported(const BusesLayout& layout) const override
     {
-        return layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        return layout.getMainInputChannelSet().isDisabled()
+            && layout.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
     }
 
     void prepareToPlay(double sampleRate, int) override
     {
-        rate = sampleRate;
-        phase = level = target = 0.0;
+        engine.prepare(sampleRate, readSettings());
     }
 
-    void releaseResources() override {}
+    void reset() override { engine.reset(); }
+    void releaseResources() override { engine.reset(); }
 
     void processBlock(juce::AudioBuffer<float>& audio, juce::MidiBuffer& midi) override
     {
         juce::ScopedNoDenormals noDenormals;
-        auto event = midi.cbegin();
-        const auto end = midi.cend();
-        auto* left = audio.getWritePointer(0);
-        auto* right = audio.getWritePointer(1);
-        const auto gain = juce::Decibels::decibelsToGain(output->load(std::memory_order_relaxed));
+        if (audio.getNumChannels() == 2 && audio.getNumSamples() > 0)
+            engine.process(audio, midi, readSettings());
+        else
+            audio.clear();
 
-        for (int sample = 0; sample < audio.getNumSamples(); ++sample)
-        {
-            while (event != end && (*event).samplePosition <= sample)
-            {
-                const auto message = *event++;
-                if (message.numBytes == 3)
-                {
-                    const auto status = message.data[0] & 0xf0;
-                    if (status == 0x90 && message.data[2] != 0)
-                    {
-                        note = message.data[1];
-                        frequency = juce::MidiMessage::getMidiNoteInHertz(note);
-                        target = message.data[2] / 127.0;
-                    }
-                    else if ((status == 0x80 || status == 0x90) && message.data[1] == note)
-                    {
-                        target = 0.0;
-                    }
-                }
-            }
-
-            level += (target - level) * 0.003;
-            left[sample] = right[sample] = static_cast<float>(
-                std::sin(phase * juce::MathConstants<double>::twoPi) * level * gain * 0.3);
-            phase += frequency / rate;
-            phase -= std::floor(phase);
-        }
         midi.clear();
     }
 
     void getStateInformation(juce::MemoryBlock& destination) override
     {
         auto snapshot = state.copyState();
-        snapshot.setProperty("schemaVersion", 1, nullptr);
-        if (auto xml = snapshot.createXml())
+        snapshot.setProperty(versionKey, stateVersion, nullptr);
+        if (const auto xml = snapshot.createXml())
             copyXmlToBinary(*xml, destination);
     }
 
     void setStateInformation(const void* data, int size) override
     {
-        if (auto xml = getXmlFromBinary(data, size))
-        {
-            auto restored = juce::ValueTree::fromXml(*xml);
-            if (restored.hasType(state.state.getType()) && int(restored["schemaVersion"]) == 1)
-                state.replaceState(restored);
-        }
+        const auto xml = getXmlFromBinary(data, size);
+        if (xml == nullptr)
+            return;
+
+        auto restored = juce::ValueTree::fromXml(*xml);
+        if (!restored.hasType(stateType) || static_cast<int>(restored[versionKey]) != stateVersion)
+            return;
+
+        // The bootstrap build saved output alone. Fill missing parameters from Init.
+        for (const auto& child : defaults)
+            if (!restored.getChildWithProperty("id", child["id"]).isValid())
+                restored.appendChild(child.createCopy(), nullptr);
+
+        state.replaceState(restored);
     }
 
 private:
-    static juce::AudioProcessorValueTreeState::ParameterLayout makeParameters()
+    wave::Settings readSettings() const noexcept
     {
-        juce::AudioProcessorValueTreeState::ParameterLayout layout;
-        layout.add(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID { "output", 1 }, "Output",
-            juce::NormalisableRange<float> { -60.0f, 0.0f, 0.1f }, -9.0f,
-            juce::AudioParameterFloatAttributes().withLabel("dB")));
-        return layout;
+        wave::Settings settings;
+        for (std::size_t i = 0; i < values.size(); ++i)
+            settings[i] = values[i]->load(std::memory_order_relaxed);
+        return settings;
     }
 
-    juce::AudioProcessorValueTreeState state;
-    const std::atomic<float>* output = state.getRawParameterValue("output");
-    double rate = 44100.0;
-    double frequency = 0.0;
-    double phase = 0.0;
-    double level = 0.0;
-    double target = 0.0;
-    int note = -1;
+    wave::ParameterState state;
+    const juce::ValueTree defaults;
+    std::array<const std::atomic<float>*, wave::parameterCount> values {};
+    wave::SynthEngine engine;
 };
 }
 

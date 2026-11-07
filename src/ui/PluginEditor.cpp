@@ -490,7 +490,8 @@ private:
         control.knob.setWantsKeyboardFocus(true);
         control.knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         control.knob.setRotaryParameters(juce::degreesToRadians(225.0f), juce::degreesToRadians(495.0f), true);
-        control.knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, parameter == cutoff ? 54 : 47, 23);
+        const auto valueWidth = parameter == output ? 60 : parameter == cutoff ? 54 : 47;
+        control.knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, valueWidth, 23);
         control.knob.addMouseListener(this, true);
         addAndMakeVisible(control.knob);
         control.attachment = std::make_unique<ParameterState::SliderAttachment>(

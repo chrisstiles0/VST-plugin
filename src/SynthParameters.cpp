@@ -35,6 +35,12 @@ constexpr std::array<ParameterInfo, parameterCount> parameters {{
     { "position_depth", "Position depth", "%", 0, 100, 0.1f, 0 },
     { "cutoff_depth", "Cutoff depth", "%", 0, 100, 0.1f, 0 },
     { "output", "Output", "dB", -60, 0, 0.1f, -9 },
+    { "osc1_level", "Oscillator 1 level", "%", 0, 100, 0.1f, 100 },
+    { "osc2_table", "Oscillator 2 table", "", 0, importedTableIndex, 1, 0 },
+    { "osc2_position", "Oscillator 2 position", "%", 0, 100, 0.1f, 0 },
+    { "osc2_transpose", "Oscillator 2 transpose", "st", -24, 24, 1, -12 },
+    { "osc2_fine", "Oscillator 2 fine tune", "ct", -100, 100, 0.1f, 0 },
+    { "osc2_level", "Oscillator 2 level", "%", 0, 100, 0.1f, 0 },
 }};
 
 void applyPatch(Settings& values, int index)
@@ -54,6 +60,7 @@ void applyPatch(Settings& values, int index)
             values[resonance] = 10;
             break;
         case 2:
+        case 4:
             values[table] = 1;
             values[position] = 43;
             values[tune] = -12;
@@ -64,6 +71,12 @@ void applyPatch(Settings& values, int index)
             values[lfoRate] = 2.2f;
             values[positionDepth] = 37;
             values[cutoffDepth] = 46;
+            if (index == 4)
+            {
+                values[tune] = 0;
+                values[level] = 72;
+                values[level2] = 38;
+            }
             break;
         case 3:
             values[table] = 1;
@@ -98,15 +111,17 @@ ParameterState::ParameterLayout makeParameters()
     for (std::size_t i = 0; i < parameters.size(); ++i)
     {
         const auto& entry = parameters[i];
-        const juce::ParameterID id { entry.id, 1 };
-        if (i == table || i == lfoMode)
+        const juce::ParameterID id { entry.id, i < level ? 1 : 2 };
+        if (i == table || i == table2 || i == lfoMode)
         {
-            const auto choices = i == table ? juce::StringArray { "Classic", "Hollow" }
-                                            : juce::StringArray { "Free-running", "Note-triggered" };
+            auto choices = i == lfoMode ? juce::StringArray { "Free-running", "Note-triggered" }
+                                        : juce::StringArray { "Classic", "Hollow" };
+            if (i == table2)
+                choices.add("Imported");
             layout.add(std::make_unique<juce::AudioParameterChoice>(
                 id, entry.name, choices, static_cast<int>(entry.initial)));
         }
-        else if (i == tune || i == unison)
+        else if (i == tune || i == tune2 || i == unison)
         {
             layout.add(std::make_unique<juce::AudioParameterInt>(
                 id, entry.name, static_cast<int>(entry.minimum), static_cast<int>(entry.maximum),
@@ -127,7 +142,10 @@ ParameterState::ParameterLayout makeParameters()
     return layout;
 }
 
-juce::StringArray patchNames() { return { "Init", "Wide unison lead", "Modulated bass", "Evolving pad" }; }
+juce::StringArray patchNames()
+{
+    return { "Init", "Wide unison lead", "Modulated bass", "Evolving pad", "Layered bass" };
+}
 
 void loadPatch(ParameterState& state, int index)
 {

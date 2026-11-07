@@ -9,6 +9,8 @@
 namespace wave
 {
 class WavetableBank;
+class ImportedWavetable;
+class WavetableImports;
 
 class SynthEngine
 {
@@ -21,13 +23,14 @@ public:
         bool playing;
     };
 
-    SynthEngine();
+    explicit SynthEngine(WavetableImports& imports);
     void prepare(double sampleRate, const Settings& settings);
     void reset() noexcept;
     void process(juce::AudioBuffer<float>& audio, const juce::MidiBuffer& midi, Settings settings) noexcept;
 
     Modulation modulation() const noexcept;
     float preview(float phase, float framePosition, int tableIndex) const noexcept;
+    float previewLayer(float phase, float position, int tableIndex, const ImportedWavetable* imported) const noexcept;
 
 private:
     static constexpr std::size_t unisonCount = 7;
@@ -50,6 +53,7 @@ private:
     struct Voice
     {
         std::array<double, unisonCount> phases {};
+        double layerPhase = 0.0;
         double lfoPhase = 0.0;
         double frequency = 0.0;
         juce::ADSR envelope;
@@ -76,6 +80,7 @@ private:
     void silence(Voice& voice) noexcept;
 
     const WavetableBank& tables;
+    WavetableImports& imports;
     std::array<Voice, polyphony> voices;
     std::array<bool, 16> sustainPedal {};
     std::array<juce::SmoothedValue<float>, parameterCount> smooth;

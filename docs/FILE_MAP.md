@@ -16,6 +16,8 @@
 | `SynthParameters.cpp` | Parameter definitions, ranges, defaults, and factory patch values. | [`src/SynthParameters.cpp`](../src/SynthParameters.cpp) |
 | `WavetableSynth.h` | DSP interface, voice storage, and editor modulation snapshot. | [`src/dsp/WavetableSynth.h`](../src/dsp/WavetableSynth.h) |
 | `WavetableSynth.cpp` | Wavetable generation, MIDI voice allocation, rendering, filter, and modulation. | [`src/dsp/WavetableSynth.cpp`](../src/dsp/WavetableSynth.cpp) |
+| `WavetableImport.h` | Imported table and audio thread handoff interfaces. | [`src/dsp/WavetableImport.h`](../src/dsp/WavetableImport.h) |
+| `WavetableImport.cpp` | WAV validation, band-limited frames, project encoding, and table lifetime. | [`src/dsp/WavetableImport.cpp`](../src/dsp/WavetableImport.cpp) |
 | `PluginEditor.h` | Editor creation interface. | [`src/ui/PluginEditor.h`](../src/ui/PluginEditor.h) |
 | `PluginEditor.cpp` | Layout, look and feel, control bindings, and waveform and LFO displays. | [`src/ui/PluginEditor.cpp`](../src/ui/PluginEditor.cpp) |
 

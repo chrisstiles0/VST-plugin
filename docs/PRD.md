@@ -32,6 +32,8 @@ Use FL Studio mixer effects for arrangement references that need them.
 
 Milestone 2 implementation starts only after all Milestone 1 checks pass on the agreed FL Studio setup, every known defect affecting Milestone 1 functionality or usability is fixed and retested, and Chris explicitly signs off. For sign-off, use all three patches in a short arrangement and verify sound shaping, automation, usable output levels on single notes and chords, offline export, and project recall. Record the test results and sign-off.
 
+Chris approved the start of Milestone 2 on 7 November 2026. The Milestone 1 Release build passed VST3 playback, automation parameter, state, offline rendering, and unison level checks in the test host. FL Studio project reopen and native context-menu automation were still unverified at handoff.
+
 ## Milestone 2 · Expanded sound design
 
 - **Layered sound.** Add a second wavetable oscillator with independent tuning and level so it can provide a separate layer or clean sub. Support importing custom wavetable files.

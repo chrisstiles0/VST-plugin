@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "../dsp/WavetableImport.h"
 
 #include <cmath>
 
@@ -169,21 +170,25 @@ struct Selector
 };
 
 const juce::Rectangle<int> oscillatorPanel { 16, 68, 728, 164 };
-const juce::Rectangle<int> envelopePanel { 16, 244, 242, 220 };
-const juce::Rectangle<int> filterPanel { 270, 244, 136, 220 };
-const juce::Rectangle<int> lfoPanel { 418, 244, 224, 220 };
-const juce::Rectangle<int> outputPanel { 654, 244, 90, 220 };
+const juce::Rectangle<int> layerPanel { 16, 244, 728, 164 };
+const juce::Rectangle<int> envelopePanel { 16, 420, 242, 220 };
+const juce::Rectangle<int> filterPanel { 270, 420, 136, 220 };
+const juce::Rectangle<int> lfoPanel { 418, 420, 224, 220 };
+const juce::Rectangle<int> outputPanel { 654, 420, 90, 220 };
 const juce::Rectangle<int> wavePlot { 28, 112, 224, 104 };
-const juce::Rectangle<int> envelopePlot { 28, 282, 218, 45 };
-const juce::Rectangle<int> filterPlot { 282, 282, 112, 45 };
-const juce::Rectangle<int> lfoPlot { 430, 325, 200, 38 };
-const juce::Rectangle<int> modulationReadout { 430, 439, 200, 19 };
+const juce::Rectangle<int> layerPlot { 28, 288, 224, 104 };
+const juce::Rectangle<int> importLabel { 554, 288, 178, 32 };
+const juce::Rectangle<int> envelopePlot { 28, 458, 218, 45 };
+const juce::Rectangle<int> filterPlot { 282, 458, 112, 45 };
+const juce::Rectangle<int> lfoPlot { 430, 501, 200, 38 };
+const juce::Rectangle<int> modulationReadout { 430, 615, 200, 19 };
 
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
-    Editor(juce::AudioProcessor& processor, ParameterState& parameterState, const SynthEngine& synth)
-        : AudioProcessorEditor(processor), state(parameterState), engine(synth)
+    Editor(juce::AudioProcessor& processor, ParameterState& parameterState, const SynthEngine& synth,
+           WavetableImports& wavetableImports)
+        : AudioProcessorEditor(processor), state(parameterState), engine(synth), imports(wavetableImports)
     {
         setLookAndFeel(&theme);
         setOpaque(true);
@@ -208,6 +213,17 @@ public:
         addKnob(unison, "Voices", "Set the number of oscillator voices per note");
         addKnob(detune, "Detune", "Spread the pitch of the unison voices");
         addKnob(spread, "Spread", "Spread the unison voices across the stereo field");
+        addKnob(level, "Level", "Set the level of oscillator 1");
+        addSelector(layerSelector, table2, "Select a built-in or imported wavetable for oscillator 2");
+        addKnob(position2, "Position", "Blend between frames in oscillator 2's table");
+        addKnob(tune2, "Transpose", "Transpose oscillator 2 by semitones");
+        addKnob(fine2, "Fine tune", "Adjust oscillator 2's pitch in cents");
+        addKnob(level2, "Level", "Raise this level to add oscillator 2 to the mix");
+        importButton.setTooltip("Import a mono WAV with 2,048 samples per frame");
+        importButton.setColour(juce::TextButton::buttonColourId, surface);
+        importButton.setColour(juce::TextButton::textColourOffId, text);
+        importButton.onClick = [this] { chooseWavetable(); };
+        addAndMakeVisible(importButton);
         addKnob(attack, "Attack", "Set how quickly a new note reaches its peak");
         addKnob(decay, "Decay", "Set how quickly a new note falls to the sustain level");
         addKnob(sustain, "Sustain", "Set the level a new note holds");
@@ -220,7 +236,7 @@ public:
         addKnob(cutoffDepth, "Cutoff", "Set the LFO depth for filter cutoff");
         addKnob(output, "Level", "Set the final stereo output level");
 
-        setSize(760, 480);
+        setSize(760, 656);
         startTimerHz(30);
     }
 
@@ -234,12 +250,15 @@ public:
     {
         patch.setBounds(540, 18, 204, 32);
         tableSelector.box.setBounds(264, 112, 164, 32);
-        modeSelector.box.setBounds(430, 282, 200, 32);
-        place({ position, tune, fine, unison, detune, spread }, { 264, 151, 468, 68 });
-        place({ attack, decay, sustain, release }, { 28, 333, 218, 76 });
-        place({ cutoff, resonance }, { 280, 333, 116, 76 });
-        place({ lfoRate, positionDepth, cutoffDepth }, { 430, 368, 200, 70 });
-        place({ output }, { 666, 332, 66, 76 });
+        layerSelector.box.setBounds(264, 288, 164, 32);
+        importButton.setBounds(440, 288, 104, 32);
+        modeSelector.box.setBounds(430, 458, 200, 32);
+        place({ position, tune, fine, unison, detune, spread, level }, { 264, 151, 468, 68 });
+        place({ position2, tune2, fine2, level2 }, { 264, 327, 468, 68 });
+        place({ attack, decay, sustain, release }, { 28, 509, 218, 76 });
+        place({ cutoff, resonance }, { 280, 509, 116, 76 });
+        place({ lfoRate, positionDepth, cutoffDepth }, { 430, 544, 200, 70 });
+        place({ output }, { 666, 508, 66, 76 });
     }
 
     void paint(juce::Graphics& graphics) override
@@ -254,7 +273,8 @@ public:
         graphics.setFont(font(12));
         graphics.drawText("Stereo wavetable instrument", 30, 38, 310, 15, juce::Justification::centredLeft);
 
-        drawPanel(graphics, oscillatorPanel, "Oscillator");
+        drawPanel(graphics, oscillatorPanel, "Oscillator 1");
+        drawPanel(graphics, layerPanel, "Oscillator 2");
         drawPanel(graphics, envelopePanel, "Amp envelope");
         drawPanel(graphics, filterPanel, "Low-pass filter");
         drawPanel(graphics, lfoPanel, "LFO");
@@ -262,12 +282,38 @@ public:
 
         graphics.setFont(font(12));
         graphics.setColour(muted);
-        graphics.drawText("Applies to new notes", 28, 426, 218, 20, juce::Justification::centred);
-        graphics.drawText("Stereo", 666, 284, 66, 24, juce::Justification::centred);
+        graphics.drawText("Applies to new notes", 28, 602, 218, 20, juce::Justification::centred);
+        graphics.drawText("Stereo", 666, 460, 66, 24, juce::Justification::centred);
         paintDisplays(graphics);
     }
 
 private:
+    void chooseWavetable()
+    {
+        chooser = std::make_unique<juce::FileChooser>("Import a wavetable", juce::File(), "*.wav");
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                             [safe = juce::Component::SafePointer<Editor>(this)](const juce::FileChooser& selected)
+        {
+            if (safe == nullptr || selected.getResults().isEmpty())
+                return;
+
+            juce::String error;
+            auto imported = ImportedWavetable::load(selected.getResult(), error);
+            if (imported == nullptr)
+            {
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                                       "Wavetable import", error, {}, safe.getComponent());
+                return;
+            }
+
+            safe->imports.replace(std::move(imported));
+            auto& parameter = *safe->state.getParameter(parameterId(table2));
+            parameter.beginChangeGesture();
+            parameter.setValueNotifyingHost(parameter.convertTo0to1(importedTableIndex));
+            parameter.endChangeGesture();
+        });
+    }
+
     void mouseDown(const juce::MouseEvent& event) override
     {
         if (!event.mods.isPopupMenu())
@@ -287,6 +333,8 @@ private:
 
         if (&tableSelector.box == source || tableSelector.box.isParentOf(source))
             showContextMenu(table, tableSelector.box);
+        else if (&layerSelector.box == source || layerSelector.box.isParentOf(source))
+            showContextMenu(table2, layerSelector.box);
         else if (&modeSelector.box == source || modeSelector.box.isParentOf(source))
             showContextMenu(lfoMode, modeSelector.box);
     }
@@ -449,6 +497,19 @@ private:
         drawCurve(graphics, wavePlot, accent,
                   [&](float phase) { return engine.preview(phase, currentPosition, tableIndex); });
 
+        const auto imported = imports.snapshot();
+        const auto layerTable = layerSelector.box.getSelectedItemIndex();
+        const auto layerPosition = static_cast<float>(knobs[position2].knob.getValue() * 0.01);
+        drawGrid(graphics, layerPlot);
+        drawCurve(graphics, layerPlot, accent, [&](float phase)
+        {
+            return engine.previewLayer(phase, layerPosition, layerTable, imported.get());
+        });
+        graphics.setFont(font(12));
+        graphics.setColour(muted);
+        graphics.drawFittedText(imported != nullptr ? imported->name() : "No WAV imported",
+                                importLabel, juce::Justification::centredLeft, 1);
+
         paintEnvelope(graphics);
 
         const auto cutoffHz = mod.playing ? mod.cutoff : static_cast<float>(knobs[cutoff].knob.getValue());
@@ -514,6 +575,8 @@ private:
     void timerCallback() override
     {
         repaint(wavePlot);
+        repaint(layerPlot);
+        repaint(importLabel);
         repaint(envelopePlot);
         repaint(filterPlot);
         repaint(lfoPlot);
@@ -523,17 +586,22 @@ private:
     EditorLookAndFeel theme;
     ParameterState& state;
     const SynthEngine& engine;
+    WavetableImports& imports;
     juce::ComboBox patch;
     Selector tableSelector;
+    Selector layerSelector;
     Selector modeSelector;
+    juce::TextButton importButton { "Import WAV" };
+    std::unique_ptr<juce::FileChooser> chooser;
     std::array<KnobControl, parameterCount> knobs;
     juce::TooltipWindow tooltips { this, 600 };
 };
 }
 
 juce::AudioProcessorEditor* createWavetableEditor(juce::AudioProcessor& processor,
-                                                ParameterState& state, const SynthEngine& engine)
+                                                ParameterState& state, const SynthEngine& engine,
+                                                WavetableImports& imports)
 {
-    return new Editor(processor, state, engine);
+    return new Editor(processor, state, engine, imports);
 }
 }

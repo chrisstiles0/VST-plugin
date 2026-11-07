@@ -24,6 +24,7 @@ juce_add_plugin(WavetableSynth
 target_sources(WavetableSynth PRIVATE
     src/PluginProcessor.cpp
     src/SynthParameters.cpp
+    src/dsp/WavetableImport.cpp
     src/dsp/WavetableSynth.cpp
     src/ui/PluginEditor.cpp
 )
@@ -34,6 +35,6 @@ target_compile_definitions(WavetableSynth PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
 target_link_libraries(WavetableSynth
-    PRIVATE juce::juce_audio_processors
+    PRIVATE juce::juce_audio_processors juce::juce_dsp
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags
 )

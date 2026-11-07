@@ -1,12 +1,15 @@
 #include "SynthParameters.h"
 #include "dsp/WavetableSynth.h"
+#include "dsp/WavetableImport.h"
 #include "ui/PluginEditor.h"
 
 namespace
 {
 const juce::Identifier stateType("WavetableSynthState");
 const juce::Identifier versionKey("schemaVersion");
-constexpr int stateVersion = 1;
+const juce::Identifier importName("importedTableName");
+const juce::Identifier importSamples("importedTableSamples");
+constexpr int stateVersion = 2;
 
 class WavetableProcessor final : public juce::AudioProcessor
 {
@@ -36,7 +39,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override
     {
-        return wave::createWavetableEditor(*this, state, engine);
+        return wave::createWavetableEditor(*this, state, engine, imports);
     }
 
     bool isBusesLayoutSupported(const BusesLayout& layout) const override
@@ -68,6 +71,11 @@ public:
     {
         auto snapshot = state.copyState();
         snapshot.setProperty(versionKey, stateVersion, nullptr);
+        if (const auto imported = imports.snapshot())
+        {
+            snapshot.setProperty(importName, imported->name(), nullptr);
+            snapshot.setProperty(importSamples, imported->encode(), nullptr);
+        }
         if (const auto xml = snapshot.createXml())
             copyXmlToBinary(*xml, destination);
     }
@@ -79,14 +87,26 @@ public:
             return;
 
         auto restored = juce::ValueTree::fromXml(*xml);
-        if (!restored.hasType(stateType) || static_cast<int>(restored[versionKey]) != stateVersion)
+        const auto version = static_cast<int>(restored[versionKey]);
+        if (!restored.hasType(stateType) || (version != 1 && version != stateVersion))
             return;
 
-        // The bootstrap build saved output alone. Fill missing parameters from Init.
+        std::shared_ptr<const wave::ImportedWavetable> imported;
+        if (version == stateVersion && restored.hasProperty(importSamples))
+        {
+            imported = wave::ImportedWavetable::restore(restored[importName].toString(), restored[importSamples].toString());
+            if (imported == nullptr)
+                return;
+        }
+        restored.removeProperty(importName, nullptr);
+        restored.removeProperty(importSamples, nullptr);
+
+        // Earlier sessions have no oscillator 2 controls. Init keeps that layer muted.
         for (const auto& child : defaults)
             if (!restored.getChildWithProperty("id", child["id"]).isValid())
                 restored.appendChild(child.createCopy(), nullptr);
 
+        imports.replace(std::move(imported));
         state.replaceState(restored);
     }
 
@@ -102,7 +122,8 @@ private:
     wave::ParameterState state;
     const juce::ValueTree defaults;
     std::array<const std::atomic<float>*, wave::parameterCount> values {};
-    wave::SynthEngine engine;
+    wave::WavetableImports imports;
+    wave::SynthEngine engine { imports };
 };
 }
 

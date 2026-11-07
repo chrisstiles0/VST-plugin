@@ -1,4 +1,5 @@
 #include "WavetableSynth.h"
+#include "WavetableImport.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,8 +11,8 @@ namespace
 constexpr float pi = juce::MathConstants<float>::pi;
 constexpr double twoPi = juce::MathConstants<double>::twoPi;
 constexpr int frameCount = 4;
-constexpr int levelCount = 9;
-constexpr int tableSize = 2048;
+constexpr int levelCount = ImportedWavetable::levelCount;
+constexpr int tableSize = ImportedWavetable::frameSize;
 constexpr int tableMask = tableSize - 1;
 
 double wrap(double phase) noexcept
@@ -50,6 +51,24 @@ float limit(float sample) noexcept
     const auto excess = std::abs(sample) - 0.9f;
     return excess > 0.0f ? std::copysign(0.9f + 0.1f * excess / (0.1f + excess), sample)
                          : sample;
+}
+
+template <typename Sample>
+float renderBandlimited(double step, Sample sample) noexcept
+{
+    constexpr double bandwidth = 0.45;
+    if (step >= bandwidth)
+        return 0.0f;
+
+    // Blend only bands whose highest partial is inside the Nyquist guard.
+    int exponent = 0;
+    const auto fraction = std::frexp(bandwidth / step, &exponent);
+    const auto upper = std::min(exponent - 1, levelCount - 1);
+    const auto mix = exponent > levelCount ? 1.0f : static_cast<float>(2.0 * fraction - 1.0);
+    auto value = sample(upper);
+    if (upper > 0 && mix < 1.0f)
+        value = juce::jmap(mix, sample(upper - 1), value);
+    return value * static_cast<float>(std::min(1.0, (bandwidth - step) / 0.05));
 }
 }
 
@@ -98,19 +117,7 @@ public:
 
     float render(double phase, double step, float framePosition, float blend) const noexcept
     {
-        constexpr double bandwidth = 0.45;
-        if (step >= bandwidth)
-            return 0.0f;
-
-        // Crossfade only between levels whose highest partial is inside the guard band.
-        int exponent = 0;
-        const auto fraction = std::frexp(bandwidth / step, &exponent);
-        const auto upper = std::min(exponent - 1, levelCount - 1);
-        const auto mix = exponent > levelCount ? 1.0f : static_cast<float>(2.0 * fraction - 1.0);
-        auto value = sample(phase, framePosition, blend, upper);
-        if (upper > 0 && mix < 1.0f)
-            value = juce::jmap(mix, sample(phase, framePosition, blend, upper - 1), value);
-        return value * static_cast<float>(std::min(1.0, (bandwidth - step) / 0.05));
+        return renderBandlimited(step, [&](int band) { return sample(phase, framePosition, blend, band); });
     }
 
     float sample(double phase, float framePosition, float blend, int level = levelCount - 1) const noexcept
@@ -153,7 +160,7 @@ const WavetableBank& builtInTables()
 }
 }
 
-SynthEngine::SynthEngine() : tables(builtInTables()) {}
+SynthEngine::SynthEngine(WavetableImports& imported) : tables(builtInTables()), imports(imported) {}
 
 float SynthEngine::Filter::process(float input, float g, float damping) noexcept
 {
@@ -211,6 +218,9 @@ void SynthEngine::reset() noexcept
 void SynthEngine::setTargets(Settings settings, bool immediate) noexcept
 {
     settings[position] *= 0.01f;
+    settings[position2] *= 0.01f;
+    settings[level] *= 0.01f;
+    settings[level2] *= 0.01f;
     settings[spread] *= 0.01f;
     settings[attack] *= 0.001f;
     settings[decay] *= 0.001f;
@@ -276,6 +286,7 @@ void SynthEngine::startNote(int channel, int note, int velocity, const Settings&
     voice.frequency = juce::MidiMessage::getMidiNoteInHertz(note);
     voice.velocity = static_cast<float>(velocity) / 127.0f;
     voice.lfoPhase = 0.0;
+    voice.layerPhase = 0.0;
     const auto phaseSpread = detuneBlend(current[detune]);
     for (std::size_t i = 0; i < voice.phases.size(); ++i)
         voice.phases[i] = phaseSpread * wrap(static_cast<double>(i) * 0.38196601125);
@@ -369,6 +380,7 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
     auto* left = audio.getWritePointer(0);
     auto* right = audio.getWritePointer(1);
     const auto nyquistGuard = std::log2(static_cast<float>(rate) * 0.45f);
+    const auto* imported = imports.acquireForAudio();
     Modulation display {};
 
     for (int sample = 0; sample < audio.getNumSamples(); ++sample)
@@ -382,6 +394,9 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
         std::array<double, unisonCount> steps;
         std::array<Stereo, unisonCount> panning;
         const auto tuning = current[tune] * 100.0f + current[fine];
+        const auto layerRatio = current[level2] > 0.0f
+            ? std::exp2((current[tune2] * 100.0f + current[fine2]) / 1200.0) / rate
+            : 0.0;
         Stereo panSum;
         float unisonEnergy = 0.0f;
         for (std::size_t i = 0; i < unisonCount; ++i)
@@ -435,10 +450,30 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
                     voice.phases[i] = wrap(voice.phases[i] + step);
                 }
 
+                float layer = 0.0f;
+                if (layerRatio > 0.0)
+                {
+                    const auto step = voice.frequency * layerRatio;
+                    const auto phase = voice.layerPhase;
+                    const auto tableBlend = current[table2];
+                    layer = renderBandlimited(step, [&](int band)
+                    {
+                        if (tableBlend <= 1.0f)
+                            return tables.sample(phase, current[position2], tableBlend, band);
+
+                        const auto custom = imported != nullptr ? imported->sample(phase, current[position2], band) : 0.0f;
+                        if (tableBlend >= importedTableIndex)
+                            return custom;
+                        return juce::jmap(tableBlend - 1.0f, tables.sample(phase, current[position2], 1.0f, band), custom);
+                    }) * current[level2];
+                    voice.layerPhase = wrap(phase + step);
+                }
+
                 amplitude = voice.envelope.getNextSample() * voice.velocity;
                 voice.lastAmplitude = amplitude;
-                voice.lastSample = { voice.leftFilter.process(oscillator.left * unisonGain, g, damping) * amplitude,
-                                     voice.rightFilter.process(oscillator.right * unisonGain, g, damping) * amplitude };
+                const auto mainGain = unisonGain * current[level];
+                voice.lastSample = { voice.leftFilter.process(oscillator.left * mainGain + layer, g, damping) * amplitude,
+                                     voice.rightFilter.process(oscillator.right * mainGain + layer, g, damping) * amplitude };
                 mix.left += voice.lastSample.left;
                 mix.right += voice.lastSample.right;
 
@@ -468,6 +503,7 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
         freePhase = wrap(freePhase + lfoStep);
     }
 
+    imports.releaseFromAudio();
     displayPhase.store(display.phase, std::memory_order_relaxed);
     displayPosition.store(display.position, std::memory_order_relaxed);
     displayCutoff.store(display.cutoff, std::memory_order_relaxed);
@@ -483,5 +519,14 @@ SynthEngine::Modulation SynthEngine::modulation() const noexcept
 float SynthEngine::preview(float phase, float framePosition, int tableIndex) const noexcept
 {
     return tables.sample(phase, framePosition, static_cast<float>(tableIndex));
+}
+
+float SynthEngine::previewLayer(float phase, float framePosition, int tableIndex,
+                                const ImportedWavetable* imported) const noexcept
+{
+    if (tableIndex == importedTableIndex)
+        return imported != nullptr ? imported->sample(phase, framePosition) : 0.0f;
+
+    return preview(phase, framePosition, tableIndex);
 }
 }

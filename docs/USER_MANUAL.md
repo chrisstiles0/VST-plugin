@@ -31,7 +31,7 @@ Select a factory sound in **Load patch**. Loading it replaces the instance's sou
 
 ## Automate controls and reopen a project
 
-Wavetable position, cutoff, resonance, LFO rate and depths, and output level are available to FL Studio automation. Move a control and use **Tools → Last tweaked → Create automation clip**. Save the project to keep each instance's settings and automation with its pattern.
+Right-click a parameter control to reset it to its Init value or use any actions the host provides. In FL Studio, you can also move a control and use **Tools → Last tweaked → Create automation clip**. Save the project to keep each instance's settings and automation with its pattern.
 
 ## First-build audition
 

@@ -110,7 +110,30 @@ public:
     }
 };
 
-class Knob final : public juce::Slider
+template <typename Base>
+class ParameterControl : public Base
+{
+public:
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        if (!event.mods.isPopupMenu())
+            Base::mouseDown(event);
+    }
+
+    void mouseDrag(const juce::MouseEvent& event) override
+    {
+        if (!event.mods.isPopupMenu())
+            Base::mouseDrag(event);
+    }
+
+    void mouseDoubleClick(const juce::MouseEvent& event) override
+    {
+        if (!event.mods.isPopupMenu())
+            Base::mouseDoubleClick(event);
+    }
+};
+
+class Knob final : public ParameterControl<juce::Slider>
 {
 public:
     bool keyPressed(const juce::KeyPress& key) override
@@ -141,7 +164,7 @@ struct KnobControl
 
 struct Selector
 {
-    juce::ComboBox box;
+    ParameterControl<juce::ComboBox> box;
     std::unique_ptr<ParameterState::ComboBoxAttachment> attachment;
 };
 
@@ -245,6 +268,54 @@ public:
     }
 
 private:
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        if (!event.mods.isPopupMenu())
+            return;
+
+        // A value field can be a child of its knob. Route both surfaces to the same parameter.
+        const auto* source = event.eventComponent;
+        for (std::size_t i = 0; i < knobs.size(); ++i)
+        {
+            auto& knob = knobs[i].knob;
+            if (&knob == source || knob.isParentOf(source))
+            {
+                showContextMenu(static_cast<Parameter>(i), knob);
+                return;
+            }
+        }
+
+        if (&tableSelector.box == source || tableSelector.box.isParentOf(source))
+            showContextMenu(table, tableSelector.box);
+        else if (&modeSelector.box == source || modeSelector.box.isParentOf(source))
+            showContextMenu(lfoMode, modeSelector.box);
+    }
+
+    void showContextMenu(Parameter parameter, juce::Component& control)
+    {
+        auto& value = *state.getParameter(parameterId(parameter));
+        juce::PopupMenu menu;
+        if (const auto* context = getHostContext())
+            if (const auto hostMenu = context->getContextMenuForParameter(&value))
+                menu = hostMenu->getEquivalentPopupMenu();
+
+        const auto defaults = value.getDefaultValue();
+        if (menu.getNumItems() != 0)
+            menu.addSeparator();
+        menu.addItem("Reset", value.getValue() != defaults, false,
+                     [safe = juce::Component::SafePointer<Editor>(this), parameter, defaults]
+        {
+            if (safe != nullptr)
+            {
+                auto& target = *safe->state.getParameter(parameterId(parameter));
+                target.beginChangeGesture();
+                target.setValueNotifyingHost(defaults);
+                target.endChangeGesture();
+            }
+        });
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(control).withMousePosition());
+    }
+
     static void drawPanel(juce::Graphics& graphics, juce::Rectangle<int> bounds, const char* heading)
     {
         graphics.setColour(panel);
@@ -263,6 +334,7 @@ private:
         selector.box.addItemList(choice->choices, 1);
         selector.box.setTitle(parameterName(parameter));
         selector.box.setTooltip(tooltip);
+        selector.box.addMouseListener(this, true);
         addAndMakeVisible(selector.box);
         selector.attachment = std::make_unique<ParameterState::ComboBoxAttachment>(
             state, parameterId(parameter), selector.box);
@@ -285,6 +357,7 @@ private:
         control.knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         control.knob.setRotaryParameters(juce::degreesToRadians(225.0f), juce::degreesToRadians(495.0f), true);
         control.knob.setTextBoxStyle(juce::Slider::TextBoxBelow, false, parameter == cutoff ? 54 : 47, 23);
+        control.knob.addMouseListener(this, true);
         addAndMakeVisible(control.knob);
         control.attachment = std::make_unique<ParameterState::SliderAttachment>(
             state, parameterId(parameter), control.knob);

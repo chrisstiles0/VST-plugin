@@ -105,6 +105,19 @@ void applyPatch(Settings& values, int index)
             values[cutoffDepth] = 27;
             values[output] = -7;
             break;
+        case 5:
+            values[position] = 44;
+            values[attack] = 3;
+            values[decay] = 170;
+            values[sustain] = 18;
+            values[release] = 115;
+            values[cutoff] = 4800;
+            values[driveAmount] = 38;
+            values[delayTime] = 280;
+            values[delayFeedback] = 40;
+            values[delayMix] = 34;
+            values[output] = -12;
+            break;
         default:
             break;
     }
@@ -162,7 +175,7 @@ ParameterState::ParameterLayout makeParameters()
 
 juce::StringArray patchNames()
 {
-    return { "Init", "Wide unison lead", "Modulated bass", "Evolving pad", "Layered bass" };
+    return { "Init", "Wide unison lead", "Modulated bass", "Evolving pad", "Layered bass", "Echo pluck" };
 }
 
 void loadPatch(ParameterState& state, int index)

@@ -41,6 +41,7 @@ Select a factory sound in **Load patch**. Loading it replaces the instance's sou
 - **Modulated bass** uses a note-triggered sweep. Hold a note and turn the two LFO depths down one at a time to hear each destination.
 - **Evolving pad** fades in across a chord and uses a slow free-running LFO. Leave room for its release at the end of a phrase.
 - **Layered bass** combines the modulated oscillator with a sine one octave below it. Solo either layer by turning down the other oscillator's Level.
+- **Echo pluck** adds drive and a 280 ms delay to a short pluck. Tap a note, leave space for the repeats, then compare it with Drive Amount and Delay Mix at 0%.
 
 ## Automate controls and reopen a project
 

@@ -190,6 +190,7 @@ void SynthEngine::prepare(double sampleRate, const Settings& settings)
     for (auto& voice : voices)
         voice.envelope.setSampleRate(rate);
 
+    delayLine.resize(static_cast<std::size_t>(std::ceil(rate * maxDelayMs * 0.001)) + 2);
     reset();
     setTargets(settings, true);
 }
@@ -214,6 +215,8 @@ void SynthEngine::reset() noexcept
         voice.age = 0;
     }
     sustainPedal.fill(false);
+    std::fill(delayLine.begin(), delayLine.end(), Stereo {});
+    delayWrite = 0;
     freePhase = 0.0;
     noteCounter = 0;
     displayPlaying.store(false, std::memory_order_relaxed);
@@ -237,6 +240,10 @@ void SynthEngine::setTargets(Settings settings, bool immediate) noexcept
     settings[positionDepth2] *= 0.005f;
     settings[cutoffDepth] *= 0.04f;
     settings[output] = juce::Decibels::decibelsToGain(settings[output]);
+    settings[driveAmount] *= 0.01f;
+    settings[delayTime] *= static_cast<float>(rate * 0.001);
+    settings[delayFeedback] *= 0.01f;
+    settings[delayMix] *= 0.01f;
 
     const auto set = [immediate](auto& smoother, float value)
     {
@@ -526,9 +533,41 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
 
         // Leave solo notes at full gain and trim chords as their envelopes build.
         constexpr float soloGain = 0.8f;
-        const auto gain = soloGain * current[output] / std::sqrt(std::max(1.0f, envelopeEnergy));
-        left[sample] = limit(mix.left * gain);
-        right[sample] = limit(mix.right * gain);
+        const auto gain = soloGain / std::sqrt(std::max(1.0f, envelopeEnergy));
+        if (current[driveAmount] == 0.0f && current[delayMix] == 0.0f)
+        {
+            // Keep the dry render identical to earlier builds.
+            const auto dryGain = soloGain * current[output] / std::sqrt(std::max(1.0f, envelopeEnergy));
+            left[sample] = limit(mix.left * dryGain);
+            right[sample] = limit(mix.right * dryGain);
+            // Advance a silent delay while bypassed so stale echoes can't freeze.
+            delayLine[delayWrite] = {};
+        }
+        else
+        {
+            const auto saturate = [amount = current[driveAmount]](float dry)
+            {
+                const auto driven = dry * (1.0f + 11.0f * amount);
+                return dry + amount * (driven / (1.0f + std::abs(driven)) - dry);
+            };
+            const Stereo dry { saturate(mix.left * gain), saturate(mix.right * gain) };
+            const auto whole = static_cast<std::size_t>(current[delayTime]);
+            const auto fraction = current[delayTime] - static_cast<float>(whole);
+            const auto size = delayLine.size();
+            const auto recent = (delayWrite + size - whole) % size;
+            const auto older = (recent + size - 1) % size;
+            const auto echoLeft = juce::jmap(fraction, delayLine[recent].left, delayLine[older].left);
+            const auto echoRight = juce::jmap(fraction, delayLine[recent].right, delayLine[older].right);
+            const auto wet = current[delayMix];
+            const auto feedback = current[delayFeedback];
+            delayLine[delayWrite] = wet > 0.0f
+                ? Stereo { dry.left + echoLeft * feedback, dry.right + echoRight * feedback }
+                : Stereo {};
+            left[sample] = limit(juce::jmap(wet, dry.left, echoLeft) * current[output]);
+            right[sample] = limit(juce::jmap(wet, dry.right, echoRight) * current[output]);
+        }
+        if (++delayWrite == delayLine.size())
+            delayWrite = 0;
         freePhase = wrap(freePhase + lfoStep);
     }
 

@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <vector>
 
 namespace wave
 {
@@ -90,6 +91,8 @@ private:
     std::array<juce::SmoothedValue<float>, parameterCount> smooth;
     std::array<juce::SmoothedValue<float>, unisonCount> offsets;
     std::array<juce::SmoothedValue<float>, unisonCount> weights;
+    std::vector<Stereo> delayLine;
+    std::size_t delayWrite = 0;
     double rate = 44100.0;
     double freePhase = 0.0;
     std::uint64_t noteCounter = 0;

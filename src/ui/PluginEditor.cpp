@@ -175,6 +175,11 @@ const juce::Rectangle<int> envelopePanel { 16, 420, 242, 220 };
 const juce::Rectangle<int> filterPanel { 270, 420, 136, 220 };
 const juce::Rectangle<int> lfoPanel { 418, 420, 224, 220 };
 const juce::Rectangle<int> outputPanel { 654, 420, 90, 220 };
+const juce::Rectangle<int> drivePanel { 16, 420, 182, 220 };
+const juce::Rectangle<int> delayPanel { 210, 420, 432, 220 };
+constexpr std::array shapingControls { attack, decay, sustain, release, cutoff, resonance,
+                                       lfoRate, positionDepth, positionDepth2, cutoffDepth };
+constexpr std::array effectsControls { driveAmount, delayTime, delayFeedback, delayMix };
 const juce::Rectangle<int> wavePlot { 28, 112, 224, 104 };
 const juce::Rectangle<int> layerPlot { 28, 288, 224, 104 };
 const juce::Rectangle<int> importLabel { 554, 288, 178, 32 };
@@ -253,6 +258,20 @@ public:
         addKnob(positionDepth2, "Osc 2", "Set the LFO depth for oscillator 2 wavetable position");
         addKnob(cutoffDepth, "Cutoff", "Set the LFO depth for filter cutoff");
         addKnob(output, "Level", "Set the final stereo output level");
+        addKnob(driveAmount, "Amount", "Add saturation before the delay. Zero bypasses drive.");
+        addKnob(delayTime, "Time", "Set the time between echoes");
+        addKnob(delayFeedback, "Feedback", "Set how much of each echo feeds the next");
+        addKnob(delayMix, "Mix", "Blend the dry signal and echoes. Zero bypasses delay.");
+        effectsPage.setClickingTogglesState(true);
+        effectsPage.setColour(juce::TextButton::buttonColourId, surface);
+        effectsPage.setColour(juce::TextButton::buttonOnColourId, accent);
+        effectsPage.setColour(juce::TextButton::textColourOffId, text);
+        effectsPage.setColour(juce::TextButton::textColourOnId, canvas);
+        effectsPage.setTitle("Show effects controls");
+        effectsPage.setTooltip("Switch between the envelope, filter and LFO controls and the effects controls");
+        effectsPage.onClick = [this] { updateEffectsPage(); };
+        addAndMakeVisible(effectsPage);
+        updateEffectsPage();
 
         setSize(760, 656);
         startTimerHz(30);
@@ -267,6 +286,7 @@ public:
     void resized() override
     {
         patch.setBounds(540, 18, 204, 32);
+        effectsPage.setBounds(444, 18, 84, 32);
         tableSelector.box.setBounds(264, 112, 164, 32);
         mainImportButton.setBounds(440, 112, 104, 32);
         useWav.setBounds(554, 112, 80, 32);
@@ -282,6 +302,8 @@ public:
         place({ cutoff, resonance }, { 280, 509, 116, 76 });
         place({ lfoRate, positionDepth, positionDepth2, cutoffDepth }, { 430, 554, 200, 66 });
         place({ output }, { 666, 508, 66, 76 });
+        place({ driveAmount }, { 70, 508, 74, 76 });
+        place({ delayTime, delayFeedback, delayMix }, { 246, 508, 360, 76 });
     }
 
     void paint(juce::Graphics& graphics) override
@@ -298,19 +320,51 @@ public:
 
         drawPanel(graphics, oscillatorPanel, "Oscillator 1");
         drawPanel(graphics, layerPanel, "Oscillator 2");
-        drawPanel(graphics, envelopePanel, "Amp envelope");
-        drawPanel(graphics, filterPanel, "Low-pass filter");
-        drawPanel(graphics, lfoPanel, "LFO");
+        const auto showEffects = effectsPage.getToggleState();
+        if (showEffects)
+        {
+            drawPanel(graphics, drivePanel, "Drive");
+            drawPanel(graphics, delayPanel, "Stereo delay");
+        }
+        else
+        {
+            drawPanel(graphics, envelopePanel, "Amp envelope");
+            drawPanel(graphics, filterPanel, "Low-pass filter");
+            drawPanel(graphics, lfoPanel, "LFO");
+        }
         drawPanel(graphics, outputPanel, "Output");
 
         graphics.setFont(font(12));
         graphics.setColour(muted);
-        graphics.drawText("Applies to new notes", 28, 602, 218, 20, juce::Justification::centred);
+        if (showEffects)
+        {
+            graphics.drawText("0% bypasses drive", 28, 602, 158, 20, juce::Justification::centred);
+            graphics.drawText("0% Mix bypasses delay", 222, 602, 408, 20, juce::Justification::centred);
+        }
+        else
+            graphics.drawText("Applies to new notes", 28, 602, 218, 20, juce::Justification::centred);
         graphics.drawText("Stereo", 666, 460, 66, 24, juce::Justification::centred);
         paintDisplays(graphics);
     }
 
 private:
+    void updateEffectsPage()
+    {
+        const auto show = effectsPage.getToggleState();
+        const auto setControlVisible = [this](Parameter parameter, bool visible)
+        {
+            knobs[parameter].knob.setVisible(visible);
+            knobs[parameter].label.setVisible(visible);
+        };
+        for (auto parameter : shapingControls)
+            setControlVisible(parameter, !show);
+        for (auto parameter : effectsControls)
+            setControlVisible(parameter, show);
+        for (auto* selector : { &modeSelector, &shapeSelector, &cycleSelector, &timingSelector })
+            selector->box.setVisible(!show);
+        repaint();
+    }
+
     void chooseWavetable(bool firstOscillator)
     {
         chooser = std::make_unique<juce::FileChooser>("Import a wavetable", juce::File(), "*.wav");
@@ -552,6 +606,9 @@ private:
         graphics.drawFittedText(importedMain != nullptr ? importedMain->name() : "No WAV imported",
                                 mainImportLabel, juce::Justification::centredLeft, 1);
 
+        if (effectsPage.getToggleState())
+            return;
+
         paintEnvelope(graphics);
 
         const auto cutoffHz = mod.playing ? mod.cutoff : static_cast<float>(knobs[cutoff].knob.getValue());
@@ -624,10 +681,13 @@ private:
         repaint(mainImportLabel);
         knobs[lfoRate].knob.setEnabled(timingSelector.box.getSelectedItemIndex() == 0);
         modeSelector.box.setEnabled(cycleSelector.box.getSelectedItemIndex() == 0);
-        repaint(envelopePlot);
-        repaint(filterPlot);
-        repaint(lfoPlot);
-        repaint(modulationReadout);
+        if (!effectsPage.getToggleState())
+        {
+            repaint(envelopePlot);
+            repaint(filterPlot);
+            repaint(lfoPlot);
+            repaint(modulationReadout);
+        }
     }
 
     EditorLookAndFeel theme;
@@ -636,6 +696,7 @@ private:
     WavetableImports& mainImports;
     WavetableImports& imports;
     juce::ComboBox patch;
+    juce::TextButton effectsPage { "Effects" };
     Selector tableSelector;
     Selector layerSelector;
     Selector modeSelector;

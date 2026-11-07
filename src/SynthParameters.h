@@ -14,10 +14,12 @@ enum Parameter
     attack, decay, sustain, release, cutoff, resonance,
     lfoMode, lfoRate, positionDepth, cutoffDepth, output,
     level, table2, position2, tune2, fine2, level2,
-    useImported1, positionDepth2, lfoTiming, lfoCycle, lfoShape, parameterCount
+    useImported1, positionDepth2, lfoTiming, lfoCycle, lfoShape,
+    driveAmount, delayTime, delayFeedback, delayMix, parameterCount
 };
 
 constexpr int importedTableIndex = 2;
+constexpr float maxDelayMs = 1000.0f;
 constexpr std::array<double, 6> lfoBeats { 0.0, 4.0, 2.0, 1.0, 0.5, 0.25 };
 
 using Settings = std::array<float, parameterCount>;

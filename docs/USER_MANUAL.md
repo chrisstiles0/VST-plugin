@@ -22,6 +22,10 @@ Choose **Loop** with **Free-running** or **Note-triggered**, or choose **One-sho
 
 While notes play, the LFO marker follows the most recently started sounding note. The readout shows both effective positions and cutoff. Each modulated oscillator overlays its moving waveform on a dim preview of its base shape.
 
+## Add drive and delay
+
+Click **Effects** to show Drive and Stereo delay. Raise **Amount** to add harmonics to the filtered sound. Set **Time** for the gap between echoes, **Feedback** for how long they repeat, and **Mix** for the balance between the dry sound and echoes. Set Drive Amount or Delay Mix to 0% to bypass that effect. **Output** adjusts both the dry signal and the echoes.
+
 ## Layer a sub or import a wavetable
 
 Load **Layered bass** to hear oscillator 1 sweep above a sine sub. To build that layer on another patch, set oscillator 2 to **Classic**, leave **Position** at 0%, set **Transpose** to −12 st, and raise its **Level**. Set the **Osc 2** LFO depth to 0% to keep its wavetable position steady. Both oscillators feed the same low-pass filter and amp envelope.

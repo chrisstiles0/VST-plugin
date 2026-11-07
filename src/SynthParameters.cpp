@@ -46,6 +46,10 @@ constexpr std::array<ParameterInfo, parameterCount> parameters {{
     { "lfo_timing", "LFO timing", "", 0, 5, 1, 0 },
     { "lfo_cycle", "LFO cycle", "", 0, 1, 1, 0 },
     { "lfo_shape", "LFO shape", "", 0, 1, 1, 0 },
+    { "drive_amount", "Drive amount", "%", 0, 100, 0.1f, 0 },
+    { "delay_time", "Delay time", "ms", 10, maxDelayMs, 1, 250, 250 },
+    { "delay_feedback", "Delay feedback", "%", 0, 75, 0.1f, 30 },
+    { "delay_mix", "Delay mix", "%", 0, 100, 0.1f, 0 },
 }};
 
 void applyPatch(Settings& values, int index)
@@ -116,7 +120,7 @@ ParameterState::ParameterLayout makeParameters()
     for (std::size_t i = 0; i < parameters.size(); ++i)
     {
         const auto& entry = parameters[i];
-        const juce::ParameterID id { entry.id, i < level ? 1 : i < useImported1 ? 2 : 3 };
+        const juce::ParameterID id { entry.id, i < level ? 1 : i < useImported1 ? 2 : i < driveAmount ? 3 : 4 };
         if (i == useImported1)
             layout.add(std::make_unique<juce::AudioParameterBool>(id, entry.name, false));
         else if (i == table || i == table2 || i == lfoMode || i == lfoTiming || i == lfoCycle || i == lfoShape)

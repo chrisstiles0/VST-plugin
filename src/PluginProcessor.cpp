@@ -13,7 +13,7 @@ const juce::Identifier importName("importedTableName");
 const juce::Identifier importSamples("importedTableSamples");
 const juce::Identifier mainImportName("osc1ImportedTableName");
 const juce::Identifier mainImportSamples("osc1ImportedTableSamples");
-constexpr int stateVersion = 3;
+constexpr int stateVersion = 4;
 
 class WavetableProcessor final : public juce::AudioProcessor
 {
@@ -31,7 +31,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 8.0; }
+    double getTailLengthSeconds() const override { return 33.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -126,7 +126,7 @@ public:
             || !restoreTable(importedLayer, importName, importSamples))
             return;
 
-        // Earlier sessions have no oscillator 2 controls. Init keeps that layer muted.
+        // Restore controls introduced after the saved state at their Init values.
         for (const auto& child : defaults)
             if (!restored.getChildWithProperty("id", child["id"]).isValid())
                 restored.appendChild(child.createCopy(), nullptr);

@@ -183,6 +183,7 @@ void SynthEngine::silence(Voice& voice) noexcept
     voice.leftFilter = {};
     voice.rightFilter = {};
     voice.lastSample = {};
+    voice.lastAmplitude = 0.0f;
     voice.held = false;
     voice.sustained = false;
 }
@@ -258,6 +259,7 @@ void SynthEngine::startNote(int channel, int note, int velocity, const Settings&
         const auto tailGain = static_cast<float>(voice.tailSamples) / static_cast<float>(fadeSamples);
         voice.stealTail = { voice.lastSample.left + voice.stealTail.left * tailGain,
                             voice.lastSample.right + voice.stealTail.right * tailGain };
+        voice.stealAmplitude = voice.lastAmplitude + voice.stealAmplitude * tailGain;
         voice.tailSamples = fadeSamples;
     }
 
@@ -388,6 +390,7 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
         const auto freeValue = lfo(freePhase);
         const auto damping = juce::jmap(current[resonance], 1.41421356f, 0.36f);
         Stereo mix;
+        float envelopeEnergy = 0.0f;
         std::uint64_t newest = 0;
         const bool lastSample = sample == audio.getNumSamples() - 1;
         if (lastSample)
@@ -395,6 +398,7 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
 
         for (auto& voice : voices)
         {
+            float amplitude = 0.0f;
             if (voice.envelope.isActive())
             {
                 const auto modulation = juce::jmap(current[lfoMode], freeValue, lfo(voice.lfoPhase));
@@ -417,7 +421,8 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
                     voice.phases[i] = wrap(voice.phases[i] + step);
                 }
 
-                const auto amplitude = voice.envelope.getNextSample() * voice.velocity * 0.32f;
+                amplitude = voice.envelope.getNextSample() * voice.velocity;
+                voice.lastAmplitude = amplitude;
                 voice.lastSample = { voice.leftFilter.process(oscillator.left, g, damping) * amplitude,
                                      voice.rightFilter.process(oscillator.right, g, damping) * amplitude };
                 mix.left += voice.lastSample.left;
@@ -436,11 +441,16 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
                 const auto gain = static_cast<float>(--voice.tailSamples) / static_cast<float>(fadeSamples);
                 mix.left += voice.stealTail.left * gain;
                 mix.right += voice.stealTail.right * gain;
+                amplitude += voice.stealAmplitude * gain;
             }
+            envelopeEnergy += amplitude * amplitude;
         }
 
-        left[sample] = limit(mix.left * current[output]);
-        right[sample] = limit(mix.right * current[output]);
+        // Leave solo notes at full gain and trim chords as their envelopes build.
+        constexpr float soloGain = 0.8f;
+        const auto gain = soloGain * current[output] / std::sqrt(std::max(1.0f, envelopeEnergy));
+        left[sample] = limit(mix.left * gain);
+        right[sample] = limit(mix.right * gain);
         freePhase = wrap(freePhase + lfoStep);
     }
 

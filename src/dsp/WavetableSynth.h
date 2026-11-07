@@ -57,6 +57,8 @@ private:
         Filter rightFilter;
         Stereo lastSample;
         Stereo stealTail;
+        float lastAmplitude = 0.0f;
+        float stealAmplitude = 0.0f;
         float velocity = 0.0f;
         int tailSamples = 0;
         int note = 0;

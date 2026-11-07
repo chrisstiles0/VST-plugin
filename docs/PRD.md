@@ -36,8 +36,8 @@ Chris approved the start of Milestone 2 on 7 November 2026. The Milestone 1 Rele
 
 ## Milestone 2 · Expanded sound design
 
-- **Layered sound.** Add a second wavetable oscillator with independent tuning and level so it can provide a separate layer or clean sub. Support importing custom wavetable files.
-- **Modulation and effects.** Add tempo-synced LFOs, editable modulation routing, and an onboard drive and delay chain.
+- **Layered sound.** Add a second wavetable oscillator with independent tuning and level so it can provide a separate layer or clean sub. Support importing a separate custom wavetable on each oscillator.
+- **Modulation and effects.** Add tempo sync, looping and one-shot LFO playback, and independent depths for both wavetable positions and the shared cutoff. Show live modulation on both waveforms. Add onboard drive and delay.
 - **Presets.** Save and load native user presets across projects. Add factory patches that demonstrate the new controls.
 
 ### Acceptance checks
@@ -47,7 +47,25 @@ Chris approved the start of Milestone 2 on 7 November 2026. The Milestone 1 Rele
 - Save a native preset and load it in another project. Verify oscillator settings, the custom wavetable, modulation routes, and effects are restored.
 - Repeat the Milestone 1 checks, including reopening a project saved with a Milestone 1 build.
 
-**Beyond Milestone 2** · Additional synthesis engines, wavetable editing, sequencing, and support for other hosts or platforms.
+## Milestone 3 · Expanded oscillator layout
+
+- Add a third main oscillator, initially with the wavetable engine.
+- Add a dedicated Sub with independent tuning and level. Add a Noise source that can load a texture or play a transient once per note.
+- Give each source a choice of processed or direct routing so the sub can bypass the shared filter and effects.
+- Save and reopen a patch with three main layers, a direct sub, and a one-shot noise transient. Verify that the sources and routes recall together.
+
+## Milestone 4 · Wavetable warp and sample engines
+
+- Start wavetable warp with Sync and FM. Add a second warp slot, phase distortion, and ring modulation.
+- Add the Sample engine with looping, slicing, and rate control. Reuse its playback engine for SFZ multisamples with velocity and articulation mapping.
+- Let each main oscillator select its engine independently. Check mixed-engine patch recall, including audio assets and modulation.
+
+## Milestones 5 and 6 · Granular and spectral engines
+
+- Add Granular in Milestone 5 and Spectral in Milestone 6. Each of the three main oscillator slots can select any completed engine.
+- Check sound quality, polyphony, performance, and project recall separately for each engine.
+
+**Future candidates** include wavetable editing, sequencing, and support for other hosts or platforms.
 
 ## Setup before implementation
 

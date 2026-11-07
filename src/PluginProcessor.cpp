@@ -3,13 +3,17 @@
 #include "dsp/WavetableImport.h"
 #include "ui/PluginEditor.h"
 
+#include <cmath>
+
 namespace
 {
 const juce::Identifier stateType("WavetableSynthState");
 const juce::Identifier versionKey("schemaVersion");
 const juce::Identifier importName("importedTableName");
 const juce::Identifier importSamples("importedTableSamples");
-constexpr int stateVersion = 2;
+const juce::Identifier mainImportName("osc1ImportedTableName");
+const juce::Identifier mainImportSamples("osc1ImportedTableSamples");
+constexpr int stateVersion = 3;
 
 class WavetableProcessor final : public juce::AudioProcessor
 {
@@ -39,7 +43,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override
     {
-        return wave::createWavetableEditor(*this, state, engine, imports);
+        return wave::createWavetableEditor(*this, state, engine, mainImports, imports);
     }
 
     bool isBusesLayoutSupported(const BusesLayout& layout) const override
@@ -60,7 +64,17 @@ public:
     {
         juce::ScopedNoDenormals noDenormals;
         if (audio.getNumChannels() == 2 && audio.getNumSamples() > 0)
-            engine.process(audio, midi, readSettings());
+        {
+            const auto settings = readSettings();
+            auto tempo = 120.0;
+            if (settings[wave::lfoTiming] != 0.0f)
+                if (const auto* hostPlayHead = getPlayHead())
+                    if (const auto position = hostPlayHead->getPosition())
+                        if (const auto bpm = position->getBpm(); bpm && std::isfinite(*bpm) && *bpm > 0.0)
+                            tempo = *bpm;
+
+            engine.process(audio, midi, settings, tempo);
+        }
         else
             audio.clear();
 
@@ -71,11 +85,17 @@ public:
     {
         auto snapshot = state.copyState();
         snapshot.setProperty(versionKey, stateVersion, nullptr);
-        if (const auto imported = imports.snapshot())
+        const auto saveTable = [&](const wave::WavetableImports& source, const juce::Identifier& name,
+                                   const juce::Identifier& samples)
         {
-            snapshot.setProperty(importName, imported->name(), nullptr);
-            snapshot.setProperty(importSamples, imported->encode(), nullptr);
-        }
+            if (const auto imported = source.snapshot())
+            {
+                snapshot.setProperty(name, imported->name(), nullptr);
+                snapshot.setProperty(samples, imported->encode(), nullptr);
+            }
+        };
+        saveTable(mainImports, mainImportName, mainImportSamples);
+        saveTable(imports, importName, importSamples);
         if (const auto xml = snapshot.createXml())
             copyXmlToBinary(*xml, destination);
     }
@@ -88,25 +108,31 @@ public:
 
         auto restored = juce::ValueTree::fromXml(*xml);
         const auto version = static_cast<int>(restored[versionKey]);
-        if (!restored.hasType(stateType) || (version != 1 && version != stateVersion))
+        if (!restored.hasType(stateType) || version < 1 || version > stateVersion)
             return;
 
-        std::shared_ptr<const wave::ImportedWavetable> imported;
-        if (version == stateVersion && restored.hasProperty(importSamples))
+        const auto restoreTable = [&](auto& result, const juce::Identifier& name,
+                                      const juce::Identifier& samples)
         {
-            imported = wave::ImportedWavetable::restore(restored[importName].toString(), restored[importSamples].toString());
-            if (imported == nullptr)
-                return;
-        }
-        restored.removeProperty(importName, nullptr);
-        restored.removeProperty(importSamples, nullptr);
+            if (!restored.hasProperty(samples))
+                return true;
+            result = wave::ImportedWavetable::restore(restored[name].toString(), restored[samples].toString());
+            restored.removeProperty(name, nullptr);
+            restored.removeProperty(samples, nullptr);
+            return result != nullptr;
+        };
+        std::shared_ptr<const wave::ImportedWavetable> importedMain, importedLayer;
+        if (!restoreTable(importedMain, mainImportName, mainImportSamples)
+            || !restoreTable(importedLayer, importName, importSamples))
+            return;
 
         // Earlier sessions have no oscillator 2 controls. Init keeps that layer muted.
         for (const auto& child : defaults)
             if (!restored.getChildWithProperty("id", child["id"]).isValid())
                 restored.appendChild(child.createCopy(), nullptr);
 
-        imports.replace(std::move(imported));
+        mainImports.replace(std::move(importedMain));
+        imports.replace(std::move(importedLayer));
         state.replaceState(restored);
     }
 
@@ -122,8 +148,8 @@ private:
     wave::ParameterState state;
     const juce::ValueTree defaults;
     std::array<const std::atomic<float>*, wave::parameterCount> values {};
-    wave::WavetableImports imports;
-    wave::SynthEngine engine { imports };
+    wave::WavetableImports mainImports, imports;
+    wave::SynthEngine engine { mainImports, imports };
 };
 }
 

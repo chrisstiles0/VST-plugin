@@ -11,6 +11,7 @@ namespace wave
 class WavetableBank;
 class ImportedWavetable;
 class WavetableImports;
+float lfoSample(double phase, float rampAmount) noexcept;
 
 class SynthEngine
 {
@@ -19,18 +20,19 @@ public:
     {
         float phase;
         float position;
+        float position2;
         float cutoff;
         bool playing;
     };
 
-    explicit SynthEngine(WavetableImports& imports);
+    SynthEngine(WavetableImports& mainImports, WavetableImports& imports);
     void prepare(double sampleRate, const Settings& settings);
     void reset() noexcept;
-    void process(juce::AudioBuffer<float>& audio, const juce::MidiBuffer& midi, Settings settings) noexcept;
+    void process(juce::AudioBuffer<float>& audio, const juce::MidiBuffer& midi,
+                 Settings settings, double tempo) noexcept;
 
     Modulation modulation() const noexcept;
-    float preview(float phase, float framePosition, int tableIndex) const noexcept;
-    float previewLayer(float phase, float position, int tableIndex, const ImportedWavetable* imported) const noexcept;
+    float preview(float phase, float position, int tableIndex, const ImportedWavetable* imported) const noexcept;
 
 private:
     static constexpr std::size_t unisonCount = 7;
@@ -55,6 +57,7 @@ private:
         std::array<double, unisonCount> phases {};
         double layerPhase = 0.0;
         double lfoPhase = 0.0;
+        double shotPhase = 0.0;
         double frequency = 0.0;
         juce::ADSR envelope;
         Filter leftFilter;
@@ -80,6 +83,7 @@ private:
     void silence(Voice& voice) noexcept;
 
     const WavetableBank& tables;
+    WavetableImports& mainImports;
     WavetableImports& imports;
     std::array<Voice, polyphony> voices;
     std::array<bool, 16> sustainPedal {};
@@ -93,6 +97,7 @@ private:
 
     std::atomic<float> displayPhase { 0.0f };
     std::atomic<float> displayPosition { 0.0f };
+    std::atomic<float> displayPosition2 { 0.0f };
     std::atomic<float> displayCutoff { 20000.0f };
     std::atomic<bool> displayPlaying { false };
 };

@@ -6,5 +6,5 @@ namespace wave
 {
 juce::AudioProcessorEditor* createWavetableEditor(juce::AudioProcessor& processor,
                                                 ParameterState& state, const SynthEngine& engine,
-                                                WavetableImports& imports);
+                                                WavetableImports& mainImports, WavetableImports& imports);
 }

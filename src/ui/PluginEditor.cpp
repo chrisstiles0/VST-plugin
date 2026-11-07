@@ -180,15 +180,17 @@ const juce::Rectangle<int> layerPlot { 28, 288, 224, 104 };
 const juce::Rectangle<int> importLabel { 554, 288, 178, 32 };
 const juce::Rectangle<int> envelopePlot { 28, 458, 218, 45 };
 const juce::Rectangle<int> filterPlot { 282, 458, 112, 45 };
-const juce::Rectangle<int> lfoPlot { 430, 501, 200, 38 };
-const juce::Rectangle<int> modulationReadout { 430, 615, 200, 19 };
+const juce::Rectangle<int> mainImportLabel { 642, 112, 90, 32 };
+const juce::Rectangle<int> lfoPlot { 430, 520, 200, 33 };
+const juce::Rectangle<int> modulationReadout { 430, 620, 200, 16 };
 
 class Editor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     Editor(juce::AudioProcessor& processor, ParameterState& parameterState, const SynthEngine& synth,
-           WavetableImports& wavetableImports)
-        : AudioProcessorEditor(processor), state(parameterState), engine(synth), imports(wavetableImports)
+           WavetableImports& mainWavetables, WavetableImports& wavetableImports)
+        : AudioProcessorEditor(processor), state(parameterState), engine(synth),
+          mainImports(mainWavetables), imports(wavetableImports)
     {
         setLookAndFeel(&theme);
         setOpaque(true);
@@ -219,11 +221,23 @@ public:
         addKnob(tune2, "Transpose", "Transpose oscillator 2 by semitones");
         addKnob(fine2, "Fine tune", "Adjust oscillator 2's pitch in cents");
         addKnob(level2, "Level", "Raise this level to add oscillator 2 to the mix");
-        importButton.setTooltip("Import a mono WAV with 2,048 samples per frame");
-        importButton.setColour(juce::TextButton::buttonColourId, surface);
-        importButton.setColour(juce::TextButton::textColourOffId, text);
-        importButton.onClick = [this] { chooseWavetable(); };
-        addAndMakeVisible(importButton);
+        for (auto* button : { &mainImportButton, &importButton })
+        {
+            button->setTooltip("Import a mono WAV with 2,048 samples per frame");
+            button->setColour(juce::TextButton::buttonColourId, surface);
+            button->setColour(juce::TextButton::textColourOffId, text);
+            addAndMakeVisible(*button);
+        }
+        mainImportButton.onClick = [this] { chooseWavetable(true); };
+        importButton.onClick = [this] { chooseWavetable(false); };
+        useWav.setClickingTogglesState(true);
+        useWav.setTooltip("Switch oscillator 1 between its imported WAV and the built-in table");
+        useWav.setColour(juce::TextButton::buttonColourId, surface);
+        useWav.setColour(juce::TextButton::buttonOnColourId, accent);
+        useWav.setColour(juce::TextButton::textColourOffId, text);
+        useWav.setColour(juce::TextButton::textColourOnId, canvas);
+        addAndMakeVisible(useWav);
+        useWavAttachment = std::make_unique<ParameterState::ButtonAttachment>(state, parameterId(useImported1), useWav);
         addKnob(attack, "Attack", "Set how quickly a new note reaches its peak");
         addKnob(decay, "Decay", "Set how quickly a new note falls to the sustain level");
         addKnob(sustain, "Sustain", "Set the level a new note holds");
@@ -231,8 +245,12 @@ public:
         addKnob(cutoff, "Cutoff", "Set the low-pass filter frequency");
         addKnob(resonance, "Resonance", "Emphasise frequencies near cutoff");
         addSelector(modeSelector, lfoMode, "Run continuously or restart the LFO for each note");
+        addSelector(cycleSelector, lfoCycle, "Loop or run one cycle per note and hold the endpoint");
+        addSelector(shapeSelector, lfoShape, "Choose the LFO waveform");
+        addSelector(timingSelector, lfoTiming, "Choose a rate in Hz or a note length synced to the project tempo");
         addKnob(lfoRate, "Rate", "Set the LFO speed in cycles per second");
-        addKnob(positionDepth, "Position", "Set the LFO depth for wavetable position");
+        addKnob(positionDepth, "Osc 1", "Set the LFO depth for oscillator 1 wavetable position");
+        addKnob(positionDepth2, "Osc 2", "Set the LFO depth for oscillator 2 wavetable position");
         addKnob(cutoffDepth, "Cutoff", "Set the LFO depth for filter cutoff");
         addKnob(output, "Level", "Set the final stereo output level");
 
@@ -250,14 +268,19 @@ public:
     {
         patch.setBounds(540, 18, 204, 32);
         tableSelector.box.setBounds(264, 112, 164, 32);
+        mainImportButton.setBounds(440, 112, 104, 32);
+        useWav.setBounds(554, 112, 80, 32);
         layerSelector.box.setBounds(264, 288, 164, 32);
         importButton.setBounds(440, 288, 104, 32);
-        modeSelector.box.setBounds(430, 458, 200, 32);
+        modeSelector.box.setBounds(430, 448, 112, 32);
+        shapeSelector.box.setBounds(546, 448, 84, 32);
+        cycleSelector.box.setBounds(430, 484, 112, 32);
+        timingSelector.box.setBounds(546, 484, 84, 32);
         place({ position, tune, fine, unison, detune, spread, level }, { 264, 151, 468, 68 });
         place({ position2, tune2, fine2, level2 }, { 264, 327, 468, 68 });
         place({ attack, decay, sustain, release }, { 28, 509, 218, 76 });
         place({ cutoff, resonance }, { 280, 509, 116, 76 });
-        place({ lfoRate, positionDepth, cutoffDepth }, { 430, 544, 200, 70 });
+        place({ lfoRate, positionDepth, positionDepth2, cutoffDepth }, { 430, 554, 200, 66 });
         place({ output }, { 666, 508, 66, 76 });
     }
 
@@ -288,11 +311,12 @@ public:
     }
 
 private:
-    void chooseWavetable()
+    void chooseWavetable(bool firstOscillator)
     {
         chooser = std::make_unique<juce::FileChooser>("Import a wavetable", juce::File(), "*.wav");
         chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                             [safe = juce::Component::SafePointer<Editor>(this)](const juce::FileChooser& selected)
+                             [safe = juce::Component::SafePointer<Editor>(this), firstOscillator]
+                             (const juce::FileChooser& selected)
         {
             if (safe == nullptr || selected.getResults().isEmpty())
                 return;
@@ -306,10 +330,12 @@ private:
                 return;
             }
 
-            safe->imports.replace(std::move(imported));
-            auto& parameter = *safe->state.getParameter(parameterId(table2));
+            auto& destination = firstOscillator ? safe->mainImports : safe->imports;
+            destination.replace(std::move(imported));
+            auto& parameter = *safe->state.getParameter(parameterId(firstOscillator ? useImported1 : table2));
             parameter.beginChangeGesture();
-            parameter.setValueNotifyingHost(parameter.convertTo0to1(importedTableIndex));
+            const auto value = firstOscillator ? 1.0f : static_cast<float>(importedTableIndex);
+            parameter.setValueNotifyingHost(parameter.convertTo0to1(value));
             parameter.endChangeGesture();
         });
     }
@@ -337,6 +363,12 @@ private:
             showContextMenu(table2, layerSelector.box);
         else if (&modeSelector.box == source || modeSelector.box.isParentOf(source))
             showContextMenu(lfoMode, modeSelector.box);
+        else if (&cycleSelector.box == source || cycleSelector.box.isParentOf(source))
+            showContextMenu(lfoCycle, cycleSelector.box);
+        else if (&shapeSelector.box == source || shapeSelector.box.isParentOf(source))
+            showContextMenu(lfoShape, shapeSelector.box);
+        else if (&timingSelector.box == source || timingSelector.box.isParentOf(source))
+            showContextMenu(lfoTiming, timingSelector.box);
     }
 
     void showContextMenu(Parameter parameter, juce::Component& control)
@@ -486,29 +518,39 @@ private:
     {
         const auto mod = engine.modulation();
         const auto base = static_cast<float>(knobs[position].knob.getValue() * 0.01);
-        const auto tableIndex = tableSelector.box.getSelectedItemIndex();
+        const auto importedMain = mainImports.snapshot();
+        const auto tableIndex = useWav.getToggleState() ? importedTableIndex : tableSelector.box.getSelectedItemIndex();
         const auto showingModulation = mod.playing && std::abs(mod.position - base) > 0.005f;
         drawGrid(graphics, wavePlot);
         if (showingModulation)
             drawCurve(graphics, wavePlot, muted.withAlpha(0.45f),
-                      [&](float phase) { return engine.preview(phase, base, tableIndex); });
+                      [&](float phase) { return engine.preview(phase, base, tableIndex, importedMain.get()); });
 
         const auto currentPosition = showingModulation ? mod.position : base;
         drawCurve(graphics, wavePlot, accent,
-                  [&](float phase) { return engine.preview(phase, currentPosition, tableIndex); });
+                  [&](float phase) { return engine.preview(phase, currentPosition, tableIndex, importedMain.get()); });
 
         const auto imported = imports.snapshot();
         const auto layerTable = layerSelector.box.getSelectedItemIndex();
         const auto layerPosition = static_cast<float>(knobs[position2].knob.getValue() * 0.01);
+        const auto layerMoving = mod.playing && std::abs(mod.position2 - layerPosition) > 0.005f;
+        const auto currentLayerPosition = layerMoving ? mod.position2 : layerPosition;
         drawGrid(graphics, layerPlot);
+        if (layerMoving)
+            drawCurve(graphics, layerPlot, muted.withAlpha(0.45f), [&](float phase)
+            {
+                return engine.preview(phase, layerPosition, layerTable, imported.get());
+            });
         drawCurve(graphics, layerPlot, accent, [&](float phase)
         {
-            return engine.previewLayer(phase, layerPosition, layerTable, imported.get());
+            return engine.preview(phase, currentLayerPosition, layerTable, imported.get());
         });
         graphics.setFont(font(12));
         graphics.setColour(muted);
         graphics.drawFittedText(imported != nullptr ? imported->name() : "No WAV imported",
                                 importLabel, juce::Justification::centredLeft, 1);
+        graphics.drawFittedText(importedMain != nullptr ? importedMain->name() : "No WAV imported",
+                                mainImportLabel, juce::Justification::centredLeft, 1);
 
         paintEnvelope(graphics);
 
@@ -524,23 +566,25 @@ private:
         });
 
         drawGrid(graphics, lfoPlot);
-        drawCurve(graphics, lfoPlot, accent, [](float phase)
+        const auto shape = static_cast<float>(shapeSelector.box.getSelectedItemIndex() == 1);
+        drawCurve(graphics, lfoPlot, accent, [shape](float phase)
         {
-            return std::sin(juce::MathConstants<float>::twoPi * phase);
+            return lfoSample(phase, shape);
         });
 
-        if (mod.playing || modeSelector.box.getSelectedItemIndex() == 0)
+        if (mod.playing || (cycleSelector.box.getSelectedItemIndex() == 0 && modeSelector.box.getSelectedItemIndex() == 0))
         {
             const auto plot = lfoPlot.reduced(8).toFloat();
             const auto x = plot.getX() + plot.getWidth() * mod.phase;
-            const auto y = plot.getCentreY() - std::sin(juce::MathConstants<float>::twoPi * mod.phase)
+            const auto y = plot.getCentreY() - lfoSample(mod.phase, shape)
                                               * plot.getHeight() * 0.45f;
             graphics.setColour(focus);
             graphics.fillEllipse(x - 2.5f, y - 2.5f, 5.0f, 5.0f);
         }
 
-        const auto reading = "Live  " + juce::String(juce::roundToInt(currentPosition * 100.0f))
-                             + "% position   /   " + juce::String(juce::roundToInt(cutoffHz)) + " Hz";
+        const auto reading = "Osc 1 " + juce::String(juce::roundToInt(currentPosition * 100.0f))
+                             + "%   Osc 2 " + juce::String(juce::roundToInt(currentLayerPosition * 100.0f))
+                             + "%   " + juce::String(juce::roundToInt(cutoffHz)) + " Hz";
         graphics.setFont(font(12));
         graphics.setColour(muted);
         graphics.drawText(reading, modulationReadout, juce::Justification::centred);
@@ -577,6 +621,9 @@ private:
         repaint(wavePlot);
         repaint(layerPlot);
         repaint(importLabel);
+        repaint(mainImportLabel);
+        knobs[lfoRate].knob.setEnabled(timingSelector.box.getSelectedItemIndex() == 0);
+        modeSelector.box.setEnabled(cycleSelector.box.getSelectedItemIndex() == 0);
         repaint(envelopePlot);
         repaint(filterPlot);
         repaint(lfoPlot);
@@ -586,12 +633,19 @@ private:
     EditorLookAndFeel theme;
     ParameterState& state;
     const SynthEngine& engine;
+    WavetableImports& mainImports;
     WavetableImports& imports;
     juce::ComboBox patch;
     Selector tableSelector;
     Selector layerSelector;
     Selector modeSelector;
+    Selector cycleSelector;
+    Selector shapeSelector;
+    Selector timingSelector;
+    juce::TextButton mainImportButton { "Import WAV" };
     juce::TextButton importButton { "Import WAV" };
+    juce::TextButton useWav { "Use WAV" };
+    std::unique_ptr<ParameterState::ButtonAttachment> useWavAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
     std::array<KnobControl, parameterCount> knobs;
     juce::TooltipWindow tooltips { this, 600 };
@@ -600,8 +654,8 @@ private:
 
 juce::AudioProcessorEditor* createWavetableEditor(juce::AudioProcessor& processor,
                                                 ParameterState& state, const SynthEngine& engine,
-                                                WavetableImports& imports)
+                                                WavetableImports& mainImports, WavetableImports& imports)
 {
-    return new Editor(processor, state, engine, imports);
+    return new Editor(processor, state, engine, mainImports, imports);
 }
 }

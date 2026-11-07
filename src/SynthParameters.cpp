@@ -41,6 +41,11 @@ constexpr std::array<ParameterInfo, parameterCount> parameters {{
     { "osc2_transpose", "Oscillator 2 transpose", "st", -24, 24, 1, -12 },
     { "osc2_fine", "Oscillator 2 fine tune", "ct", -100, 100, 0.1f, 0 },
     { "osc2_level", "Oscillator 2 level", "%", 0, 100, 0.1f, 0 },
+    { "osc1_use_import", "Oscillator 1 use WAV", "", 0, 1, 1, 0 },
+    { "osc2_position_depth", "Oscillator 2 position depth", "%", 0, 100, 0.1f, 0 },
+    { "lfo_timing", "LFO timing", "", 0, 5, 1, 0 },
+    { "lfo_cycle", "LFO cycle", "", 0, 1, 1, 0 },
+    { "lfo_shape", "LFO shape", "", 0, 1, 1, 0 },
 }};
 
 void applyPatch(Settings& values, int index)
@@ -111,13 +116,22 @@ ParameterState::ParameterLayout makeParameters()
     for (std::size_t i = 0; i < parameters.size(); ++i)
     {
         const auto& entry = parameters[i];
-        const juce::ParameterID id { entry.id, i < level ? 1 : 2 };
-        if (i == table || i == table2 || i == lfoMode)
+        const juce::ParameterID id { entry.id, i < level ? 1 : i < useImported1 ? 2 : 3 };
+        if (i == useImported1)
+            layout.add(std::make_unique<juce::AudioParameterBool>(id, entry.name, false));
+        else if (i == table || i == table2 || i == lfoMode || i == lfoTiming || i == lfoCycle || i == lfoShape)
         {
-            auto choices = i == lfoMode ? juce::StringArray { "Free-running", "Note-triggered" }
-                                        : juce::StringArray { "Classic", "Hollow" };
-            if (i == table2)
-                choices.add("Imported");
+            juce::StringArray choices;
+            switch (i)
+            {
+                case table:     choices = { "Classic", "Hollow" }; break;
+                case table2:    choices = { "Classic", "Hollow", "Imported" }; break;
+                case lfoMode:   choices = { "Free-running", "Note-triggered" }; break;
+                case lfoTiming: choices = { "Hz", "1/1", "1/2", "1/4", "1/8", "1/16" }; break;
+                case lfoCycle:  choices = { "Loop", "One-shot" }; break;
+                case lfoShape:  choices = { "Sine", "Ramp down" }; break;
+                default: break;
+            }
             layout.add(std::make_unique<juce::AudioParameterChoice>(
                 id, entry.name, choices, static_cast<int>(entry.initial)));
         }

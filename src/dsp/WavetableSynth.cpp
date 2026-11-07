@@ -24,6 +24,11 @@ float lfo(double phase) noexcept
     return static_cast<float>(std::sin(twoPi * phase));
 }
 
+float detuneBlend(float cents) noexcept
+{
+    return std::min(cents / 3.0f, 1.0f);
+}
+
 float harmonicAmplitude(int bank, int frame, int harmonic)
 {
     const auto h = static_cast<float>(harmonic);
@@ -236,7 +241,7 @@ void SynthEngine::setTargets(Settings settings, bool immediate) noexcept
         // Keep the outgoing slot's tuning and pan while its gain fades out.
         if (enabled || immediate)
             set(offsets[i], offset);
-        set(weights[i], enabled ? 1.0f / static_cast<float>(count) : 0.0f);
+        set(weights[i], enabled ? 1.0f : 0.0f);
     }
 }
 
@@ -271,8 +276,9 @@ void SynthEngine::startNote(int channel, int note, int velocity, const Settings&
     voice.frequency = juce::MidiMessage::getMidiNoteInHertz(note);
     voice.velocity = static_cast<float>(velocity) / 127.0f;
     voice.lfoPhase = 0.0;
+    const auto phaseSpread = detuneBlend(current[detune]);
     for (std::size_t i = 0; i < voice.phases.size(); ++i)
-        voice.phases[i] = wrap(static_cast<double>(i) * 0.38196601125);
+        voice.phases[i] = phaseSpread * wrap(static_cast<double>(i) * 0.38196601125);
 
     voice.envelope.setParameters({ current[attack], current[decay], current[sustain], current[release] });
     voice.envelope.noteOn();
@@ -376,16 +382,24 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
         std::array<double, unisonCount> steps;
         std::array<Stereo, unisonCount> panning;
         const auto tuning = current[tune] * 100.0f + current[fine];
+        Stereo panSum;
+        float unisonEnergy = 0.0f;
         for (std::size_t i = 0; i < unisonCount; ++i)
         {
             const auto offset = offsets[i].getNextValue();
             const auto weight = weights[i].getNextValue();
-            const auto pan = offset * current[spread];
+            const auto pan = juce::jlimit(-1.0f, 1.0f, offset * current[spread]);
             steps[i] = std::exp2((tuning + offset * current[detune]) / 1200.0) / rate;
-            panning[i] = { weight * (1.0f - std::max(0.0f, pan)),
-                           weight * (1.0f + std::min(0.0f, pan)) };
+            panning[i] = { weight * std::sqrt(1.0f - pan), weight * std::sqrt(1.0f + pan) };
+            panSum.left += panning[i].left;
+            panSum.right += panning[i].right;
+            unisonEnergy += weight * weight;
         }
 
+        // Detuned voices add in power over time. Near zero detune, allow for in-phase summing.
+        const auto coherentEnergy = 0.5f * (panSum.left * panSum.left + panSum.right * panSum.right);
+        const auto unisonGain = 1.0f / std::sqrt(std::max(1.0f,
+            juce::jmap(detuneBlend(current[detune]), coherentEnergy, unisonEnergy)));
         const auto lfoStep = static_cast<double>(current[lfoRate]) / rate;
         const auto freeValue = lfo(freePhase);
         const auto damping = juce::jmap(current[resonance], 1.41421356f, 0.36f);
@@ -423,8 +437,8 @@ void SynthEngine::process(juce::AudioBuffer<float>& audio, const juce::MidiBuffe
 
                 amplitude = voice.envelope.getNextSample() * voice.velocity;
                 voice.lastAmplitude = amplitude;
-                voice.lastSample = { voice.leftFilter.process(oscillator.left, g, damping) * amplitude,
-                                     voice.rightFilter.process(oscillator.right, g, damping) * amplitude };
+                voice.lastSample = { voice.leftFilter.process(oscillator.left * unisonGain, g, damping) * amplitude,
+                                     voice.rightFilter.process(oscillator.right * unisonGain, g, damping) * amplitude };
                 mix.left += voice.lastSample.left;
                 mix.right += voice.lastSample.right;
 
